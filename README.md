@@ -41,11 +41,19 @@ The installer:
 
 ## Verify
 
+This self-signed daemon runs on a **dedicated socket** so it never collides with
+the official closed-source Tailscale GUI app (`io.tailscale.ipn.macsys`, which uses
+`/Library/Tailscale`). Talk to it with `--socket`:
+
 ```sh
 sudo launchctl list | grep com.tailscale
-tailscale status
-tailscale netcheck
+sudo tailscale --socket=/var/run/tailscaled.selfsigned.socket status
+sudo tailscale --socket=/var/run/tailscaled.selfsigned.socket netcheck
+# convenience:
+alias tss='sudo tailscale --socket=/var/run/tailscaled.selfsigned.socket'
 ```
+
+State lives in `/Library/TailscaleSelfSigned`.
 
 ## Build a specific upstream version
 
