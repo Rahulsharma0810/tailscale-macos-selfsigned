@@ -1,0 +1,158 @@
+name: Build macOS Apple Silicon
+
+on:
+  push:
+    branches: [main, master, dev]
+    tags: ['*']
+  pull_request:
+    branches: [main, master, dev]
+  schedule:
+    # Rebuild daily from latest upstream Tailscale release at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      tailscale_ref:
+        description: 'Upstream tailscale git ref to build (branch, tag, or commit). Empty = latest release tag.'
+        required: false
+        default: ''
+
+env:
+  # Repo this workflow lives in (used for the nightly download URL in the installer).
+  SELF_REPO: Rahulsharma0810/tailscale-macos-selfsigned
+  UPSTREAM_REPO: https://github.com/tailscale/tailscale.git
+
+jobs:
+  build_macos_silicon:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+        with:
+          path: selfsigned
+
+      - name: Resolve upstream Tailscale ref
+        id: ref
+        run: |
+          REF="${{ github.event.inputs.tailscale_ref }}"
+          if [ -z "${REF}" ]; then
+            # Latest release tag (highest semver vX.Y.Z), excluding pre-releases.
+            REF=$(git ls-remote --tags --refs "${UPSTREAM_REPO}" \
+              | awk -F/ '{print $NF}' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V | tail -n1)
+          fi
+          echo "Building upstream tailscale ref: ${REF}"
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Clone upstream Tailscale
+        run: |
+          git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" "${UPSTREAM_REPO}" tailscale
+          cd tailscale
+          echo "Building $(git describe --tags --always) from ${{ steps.ref.outputs.ref }}"
+
+      - name: Set up Go (from upstream go.mod)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tailscale/go.mod
+          cache-dependency-path: tailscale/go.sum
+
+      - name: Show toolchain versions
+        run: |
+          xcode-select -p
+          clang --version | head -1
+          go version
+          lipo -info /usr/bin/true || true
+
+      - name: Build combined universal binary (tailscaled + embedded CLI)
+        working-directory: tailscale
+        run: |
+          set -euxo pipefail
+          # --box embeds the `tailscale` CLI into `tailscaled` via the
+          # ts_include_cli build tag: invoking the binary as `tailscale`
+          # runs the CLI, otherwise it runs the daemon. Same one-binary
+          # model as ZeroTier's zerotier-one + symlinks.
+          for arch in arm64 amd64; do
+            case "$arch" in
+              arm64) goarch=arm64 ;;
+              amd64) goarch=amd64 ;;
+            esac
+            echo "==> Building darwin/${goarch}"
+            CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" \
+              ./build_dist.sh --box -o "tailscaled-${goarch}" ./cmd/tailscaled
+          done
+
+          echo "==> Creating universal binary with lipo"
+          lipo -create tailscaled-arm64 tailscaled-amd64 -output tailscaled
+          lipo -archs tailscaled
+          file tailscaled
+
+      - name: Stage binaries
+        working-directory: tailscale
+        run: |
+          set -euxo pipefail
+          mkdir -p dist/bin
+          cp tailscaled dist/bin/tailscaled
+          # `tailscale` CLI is the same binary invoked under a different name.
+          ln -sf tailscaled dist/bin/tailscale
+          cp ../selfsigned/scripts/install-macos-selfsigned.sh dist/install-macos-selfsigned.sh
+          chmod +x dist/install-macos-selfsigned.sh
+          # Record which upstream version this is.
+          ./dist/bin/tailscaled --version > dist/VERSION.txt || true
+          echo "upstream_ref=${{ steps.ref.outputs.ref }}" >> dist/VERSION.txt
+
+      - name: Ad-hoc codesign
+        working-directory: tailscale
+        run: |
+          set -euxo pipefail
+          # macOS runners have no GUI keychain identity; use ad-hoc (-)
+          # signatures. Runs after the user approves in
+          # System Settings > Privacy & Security (or after quarantine strip).
+          codesign --force --sign - --options=runtime --timestamp=none dist/bin/tailscaled
+          codesign -dv --verbose=4 dist/bin/tailscaled || true
+          codesign --verify --verbose dist/bin/tailscaled || true
+
+      - name: Package artifacts
+        working-directory: tailscale
+        run: |
+          set -euxo pipefail
+          cd dist
+          # Dereference the symlink is NOT wanted; keep it as a symlink in the tar.
+          tar -czf ../../tailscale-macos-universal.tar.gz .
+          cd ../..
+          ls -la tailscale-macos-universal.tar.gz
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailscale-macos-universal-tarball
+          path: tailscale-macos-universal.tar.gz
+          retention-days: 14
+
+      - name: Publish nightly release
+        # Move the "nightly" tag so the download URL stays stable:
+        # https://github.com/Rahulsharma0810/tailscale-macos-selfsigned/releases/download/nightly/tailscale-macos-universal.tar.gz
+        if: >-
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Tailscale macOS Apple Silicon (nightly)
+          body: |
+            Automated self-signed build for macOS Apple Silicon (universal binary).
+            Built from upstream tailscale ref: `${{ steps.ref.outputs.ref }}`.
+
+            Install:
+            ```
+            tar -xzf tailscale-macos-universal.tar.gz
+            sudo ./install-macos-selfsigned.sh
+            ```
+          files: |
+            tailscale-macos-universal.tar.gz
+          prerelease: true
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
