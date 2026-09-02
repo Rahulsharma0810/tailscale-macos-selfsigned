@@ -17,8 +17,15 @@ TAILSCALED_BIN="/usr/local/bin/tailscaled"
 TAILSCALE_BIN="/usr/local/bin/tailscale"
 SYS_PLIST="/Library/LaunchDaemons/com.tailscale.tailscaled.plist"
 SERVICE="com.tailscale.tailscaled"
-STATE_DIR="/Library/Tailscale"
+# Dedicated state dir + socket so this self-signed daemon does NOT collide with
+# the official closed-source Tailscale GUI app (io.tailscale.ipn.macsys), which
+# uses /Library/Tailscale and its own NetworkExtension.
+STATE_DIR="/Library/TailscaleSelfSigned"
+SOCKET="/var/run/tailscaled.selfsigned.socket"
 GITHUB_REPO="Rahulsharma0810/tailscale-macos-selfsigned"
+
+# `tailscale` CLI needs --socket to talk to our daemon (not the GUI app's).
+ts() { "${TAILSCALE_BIN}" --socket="${SOCKET}" "$@"; }
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "This installer is for macOS only." >&2
@@ -96,16 +103,14 @@ xattr -dr com.apple.quarantine "${TAILSCALED_BIN}" 2>/dev/null || true
 
 mkdir -p "${STATE_DIR}"
 
-# Use Tailscale's built-in daemon installer, which writes the launchd plist
-# and loads+starts the service. Fall back to a hand-written plist if the
-# built-in path fails for any reason.
+# NOTE: we deliberately do NOT use `tailscaled install-system-daemon`.
+# On macOS that command first best-effort *uninstalls* (which does
+# os.Remove(/usr/local/bin/tailscaled)) and then, because the running
+# executable IS the target path, skips re-copying it (sameFile==true) --
+# leaving no binary on disk. We write the launchd plist ourselves instead.
 echo "==> Installing LaunchDaemon..."
-if "${TAILSCALED_BIN}" install-system-daemon 2>/dev/null; then
-    echo "Installed via 'tailscaled install-system-daemon'."
-else
-    echo "Built-in install-system-daemon failed; writing plist manually." >&2
-    launchctl bootout system "${SYS_PLIST}" 2>/dev/null || true
-    tee "${SYS_PLIST}" >/dev/null <<PLIST
+launchctl bootout system "${SYS_PLIST}" 2>/dev/null || true
+tee "${SYS_PLIST}" >/dev/null <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -116,7 +121,7 @@ else
     <array>
         <string>${TAILSCALED_BIN}</string>
         <string>--state=${STATE_DIR}/tailscaled.state</string>
-        <string>--socket=/var/run/tailscaled.socket</string>
+        <string>--socket=${SOCKET}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -129,34 +134,32 @@ else
 </dict>
 </plist>
 PLIST
-    chmod 644 "${SYS_PLIST}"
-    launchctl bootstrap system "${SYS_PLIST}" 2>/dev/null || \
-        launchctl load -w "${SYS_PLIST}" 2>/dev/null || true
-fi
+chmod 644 "${SYS_PLIST}"
+launchctl bootstrap system "${SYS_PLIST}" 2>/dev/null || \
+    launchctl load -w "${SYS_PLIST}" 2>/dev/null || true
 
 # Wait for the control socket to come up.
 echo "==> Waiting for tailscaled to be ready..."
 for i in $(seq 1 15); do
-    if "${TAILSCALE_BIN}" status >/dev/null 2>&1; then
+    if [ -S "${SOCKET}" ] && ts status >/dev/null 2>&1; then
         break
     fi
-    # `status` exits non-zero when logged out too; check the daemon socket instead.
-    if "${TAILSCALE_BIN}" status 2>&1 | grep -qiE 'logged out|stopped|NeedsLogin'; then
+    # `status` exits non-zero when logged out too; treat those as "ready".
+    if ts status 2>&1 | grep -qiE 'logged out|stopped|NeedsLogin'; then
         break
     fi
     sleep 1
 done
 
 # Bring the node up with interactive browser login (unless already logged in).
-if "${TAILSCALE_BIN}" status 2>/dev/null | grep -qiv 'logged out' \
-   && "${TAILSCALE_BIN}" status >/dev/null 2>&1; then
+if ts status 2>/dev/null | grep -qiv 'logged out' && ts status >/dev/null 2>&1; then
     echo "==> Already logged in; skipping 'tailscale up'."
 else
     echo "==> Bringing Tailscale up (interactive browser login)..."
     echo "    A login URL will be printed below. Open it in a browser to authenticate."
-    "${TAILSCALE_BIN}" up || {
+    ts up || {
         echo "'tailscale up' did not complete. You can retry manually with:"
-        echo "  sudo tailscale up"
+        echo "  sudo tailscale --socket=${SOCKET} up"
     }
 fi
 
@@ -209,11 +212,14 @@ launchctl list | grep -q "com.tailscale.tailscaled.updater" \
     || echo "Updater LaunchDaemon will load on next boot."
 
 echo ""
-echo "Tailscale has been installed."
-echo "To verify:"
+echo "Tailscale (self-signed) has been installed."
+echo "This daemon uses a dedicated socket so it does NOT clash with the"
+echo "official Tailscale GUI app. Talk to it with --socket:"
 echo "  sudo launchctl list | grep com.tailscale"
-echo "  tailscale status"
-echo "  tailscale netcheck"
+echo "  sudo tailscale --socket=${SOCKET} status"
+echo "  sudo tailscale --socket=${SOCKET} netcheck"
+echo ""
+echo "Tip: add a shell alias -> alias tss='sudo tailscale --socket=${SOCKET}'"
 echo ""
 echo "If macOS blocks the binary, approve it in"
 echo "System Settings > Privacy & Security, then re-run this installer."
