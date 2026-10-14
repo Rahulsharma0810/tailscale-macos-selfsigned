@@ -51,7 +51,7 @@ if [ "${1:-}" = "--auto-update" ]; then
     mkdir -p "${EXTRACT_DIR}"
     cd "${EXTRACT_DIR}"
 
-    if ! curl -fSL --retry 3 -o tailscale-macos-universal.tar.gz "${RELEASE_URL}"; then
+    if ! curl -fSL --connect-timeout 30 --max-time 600 --retry 3 -o tailscale-macos-universal.tar.gz "${RELEASE_URL}"; then
         echo "ERROR: failed to download nightly release from ${RELEASE_URL}" >&2
         rm -rf "${EXTRACT_DIR}"
         exit 1
@@ -140,7 +140,7 @@ launchctl bootstrap system "${SYS_PLIST}" 2>/dev/null || \
 
 # Wait for the control socket to come up.
 echo "==> Waiting for tailscaled to be ready..."
-for i in $(seq 1 15); do
+for i in $(seq 1 60); do
     if [ -S "${SOCKET}" ] && ts status >/dev/null 2>&1; then
         break
     fi
@@ -154,6 +154,8 @@ done
 # Bring the node up with interactive browser login (unless already logged in).
 if ts status 2>/dev/null | grep -qiv 'logged out' && ts status >/dev/null 2>&1; then
     echo "==> Already logged in; skipping 'tailscale up'."
+elif [ "${AUTO_UPDATE}" = "1" ]; then
+    echo "==> Auto-update: not logged in or daemon not ready; skipping interactive 'tailscale up'."
 else
     echo "==> Bringing Tailscale up (interactive browser login)..."
     echo "    A login URL will be printed below. Open it in a browser to authenticate."
