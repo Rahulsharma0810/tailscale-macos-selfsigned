@@ -52,6 +52,26 @@ jobs:
           cd tailscale
           echo "Building $(git describe --tags --always) from ${{ steps.ref.outputs.ref }}"
 
+      - name: Rebrand CLI detection (retail)
+        working-directory: tailscale
+        run: |
+          set -euxo pipefail
+          # The --box build runs the CLI only when argv[0] basename is
+          # "tailscale". Rename detection to "retail" so the rebranded
+          # binary works as a CLI.
+          python3 - <<'PYEOF'
+import re
+p='cmd/tailscaled/tailscaled.go'
+s=open(p).read()
+s=s.replace('filepath.Base(os.Args[0]) == "tailscale"',
+            'filepath.Base(os.Args[0]) == "retail"')
+open(p,'w').write(s)
+PYEOF
+          grep -n 'filepath.Base(os.Args\[0\])' cmd/tailscaled/tailscaled.go
+          # Also fix self-reexec in serve --bg
+          sed -i '' 's/"tailscale", "serve", "--bg"/"retail", "serve", "--bg"/' cmd/tailscale/cli/serve_v2.go || true
+          grep -n '"retail", "serve", "--bg"' cmd/tailscale/cli/serve_v2.go || true
+
       - name: Set up Go (from upstream go.mod)
         uses: actions/setup-go@v5
         with:
