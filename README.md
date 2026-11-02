@@ -39,7 +39,8 @@ The installer:
 - ad-hoc codesigns and strips quarantine,
 - registers the LaunchDaemon (`com.retail.retaild`),
 - runs `retail up` for interactive browser login,
-- installs a root self-updater LaunchDaemon that pulls the latest `nightly` daily at 04:00.
+- installs a root self-updater LaunchDaemon that polls GitHub every 15 minutes and
+  installs a new build as soon as one is published.
 
 ## Verify
 
@@ -71,4 +72,5 @@ Run the **Build macOS Apple Silicon** workflow via *workflow_dispatch* and set
 - The upstream Tailscale code is not string-rewritten; only the binary name, socket, state
   dir, and LaunchDaemon labels are rebranded. Version/help output still reports "tailscale".
 - The workflow runs daily at 02:00 UTC so new upstream Tailscale releases are picked up
-  automatically; the installed client updates at the next 04:00 updater run.
+  automatically; the installed client polls every 15 minutes and updates as soon as a new
+  build is published (skipping redundant installs via a digest check).
