@@ -80,26 +80,26 @@ jobs:
             esac
             echo "==> Building darwin/${goarch}"
             CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" \
-              ./build_dist.sh --box -o "tailscaled-${goarch}" ./cmd/tailscaled
+              ./build_dist.sh --box -o "retaild-${goarch}" ./cmd/tailscaled
           done
 
           echo "==> Creating universal binary with lipo"
-          lipo -create tailscaled-arm64 tailscaled-amd64 -output tailscaled
-          lipo -archs tailscaled
-          file tailscaled
+          lipo -create retaild-arm64 retaild-amd64 -output retaild
+          lipo -archs retaild
+          file retaild
 
       - name: Stage binaries
         working-directory: tailscale
         run: |
           set -euxo pipefail
           mkdir -p dist/bin
-          cp tailscaled dist/bin/tailscaled
-          # `tailscale` CLI is the same binary invoked under a different name.
-          ln -sf tailscaled dist/bin/tailscale
-          cp ../selfsigned/scripts/install-macos-selfsigned.sh dist/install-macos-selfsigned.sh
-          chmod +x dist/install-macos-selfsigned.sh
+          cp retaild dist/bin/retaild
+          # `retail` CLI is the same binary invoked under a different name.
+          ln -sf retaild dist/bin/retail
+          cp ../selfsigned/scripts/install-macos-retail.sh dist/install-macos-retail.sh
+          chmod +x dist/install-macos-retail.sh
           # Record which upstream version this is.
-          ./dist/bin/tailscaled --version > dist/VERSION.txt || true
+          ./dist/bin/retaild --version > dist/VERSION.txt || true
           echo "upstream_ref=${{ steps.ref.outputs.ref }}" >> dist/VERSION.txt
 
       - name: Ad-hoc codesign
@@ -109,9 +109,9 @@ jobs:
           # macOS runners have no GUI keychain identity; use ad-hoc (-)
           # signatures. Runs after the user approves in
           # System Settings > Privacy & Security (or after quarantine strip).
-          codesign --force --sign - --options=runtime --timestamp=none dist/bin/tailscaled
-          codesign -dv --verbose=4 dist/bin/tailscaled || true
-          codesign --verify --verbose dist/bin/tailscaled || true
+          codesign --force --sign - --options=runtime --timestamp=none dist/bin/retaild
+          codesign -dv --verbose=4 dist/bin/retaild || true
+          codesign --verify --verbose dist/bin/retaild || true
 
       - name: Package artifacts
         working-directory: tailscale
@@ -119,20 +119,20 @@ jobs:
           set -euxo pipefail
           cd dist
           # Dereference the symlink is NOT wanted; keep it as a symlink in the tar.
-          tar -czf ../../tailscale-macos-universal.tar.gz .
+          tar -czf ../../retail-macos-universal.tar.gz .
           cd ../..
-          ls -la tailscale-macos-universal.tar.gz
+          ls -la retail-macos-universal.tar.gz
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tailscale-macos-universal-tarball
-          path: tailscale-macos-universal.tar.gz
+          name: retail-macos-universal-tarball
+          path: retail-macos-universal.tar.gz
           retention-days: 14
 
       - name: Publish nightly release
         # Move the "nightly" tag so the download URL stays stable:
-        # https://github.com/Rahulsharma0810/tailscale-macos-selfsigned/releases/download/nightly/tailscale-macos-universal.tar.gz
+        # https://github.com/Rahulsharma0810/tailscale-macos-selfsigned/releases/download/nightly/retail-macos-universal.tar.gz
         if: >-
           github.event_name == 'schedule' ||
           github.event_name == 'workflow_dispatch' ||
@@ -140,18 +140,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
-          name: Tailscale macOS Apple Silicon (nightly)
+          name: Retail macOS Apple Silicon (nightly)
           body: |
             Automated self-signed build for macOS Apple Silicon (universal binary).
             Built from upstream tailscale ref: `${{ steps.ref.outputs.ref }}`.
 
             Install:
             ```
-            tar -xzf tailscale-macos-universal.tar.gz
-            sudo ./install-macos-selfsigned.sh
+            tar -xzf retail-macos-universal.tar.gz
+            sudo ./install-macos-retail.sh
             ```
           files: |
-            tailscale-macos-universal.tar.gz
+            retail-macos-universal.tar.gz
           prerelease: true
           fail_on_unmatched_files: false
         env:

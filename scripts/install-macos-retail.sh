@@ -1,31 +1,31 @@
 #!/bin/bash
-# Install an unofficial self-built Tailscale daemon on macOS.
+# Install the self-built "Retail" Tailscale-derived daemon on macOS.
 # This is intended for internal/security use when the official signed
 # package is blocked by MDM policy and you need to run a locally-built,
 # self-codesigned copy until the allow-list is updated.
 #
 # Usage:
-#   tar -xzf tailscale-macos-universal.tar.gz
-#   sudo ./install-macos-selfsigned.sh
+#   tar -xzf retail-macos-universal.tar.gz
+#   sudo ./install-macos-retail.sh
 #
 # Auto-update (used by the updater LaunchDaemon):
-#   sudo ./install-macos-selfsigned.sh --auto-update
+#   sudo ./install-macos-retail.sh --auto-update
 
 set -euo pipefail
 
-TAILSCALED_BIN="/usr/local/bin/tailscaled"
-TAILSCALE_BIN="/usr/local/bin/tailscale"
-SYS_PLIST="/Library/LaunchDaemons/com.tailscale.tailscaled.plist"
-SERVICE="com.tailscale.tailscaled"
-# Dedicated state dir + socket so this self-signed daemon does NOT collide with
+RETAILD_BIN="/usr/local/bin/retaild"
+RETAIL_BIN="/usr/local/bin/retail"
+SYS_PLIST="/Library/LaunchDaemons/com.retail.retaild.plist"
+SERVICE="com.retail.retaild"
+# Dedicated state dir + socket so this self-built daemon does NOT collide with
 # the official closed-source Tailscale GUI app (io.tailscale.ipn.macsys), which
 # uses /Library/Tailscale and its own NetworkExtension.
-STATE_DIR="/Library/TailscaleSelfSigned"
-SOCKET="/var/run/tailscaled.selfsigned.socket"
+STATE_DIR="/Library/Retail"
+SOCKET="/var/run/retail.socket"
 GITHUB_REPO="Rahulsharma0810/tailscale-macos-selfsigned"
 
-# `tailscale` CLI needs --socket to talk to our daemon (not the GUI app's).
-ts() { "${TAILSCALE_BIN}" --socket="${SOCKET}" "$@"; }
+# `retail` CLI needs --socket to talk to our daemon.
+ts() { "${RETAIL_BIN}" --socket="${SOCKET}" "$@"; }
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "This installer is for macOS only." >&2
@@ -44,31 +44,31 @@ if [ "${1:-}" = "--auto-update" ]; then
     echo "==> Auto-update mode enabled."
     echo "==> Fetching latest nightly release..."
 
-    RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/nightly/tailscale-macos-universal.tar.gz"
+    RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/nightly/retail-macos-universal.tar.gz"
 
-    EXTRACT_DIR="/tmp/tailscale-update-$$"
+    EXTRACT_DIR="/tmp/retail-update-$$"
     rm -rf "${EXTRACT_DIR}"
     mkdir -p "${EXTRACT_DIR}"
     cd "${EXTRACT_DIR}"
 
-    if ! curl -fSL --connect-timeout 30 --max-time 600 --retry 3 -o tailscale-macos-universal.tar.gz "${RELEASE_URL}"; then
+    if ! curl -fSL --connect-timeout 30 --max-time 600 --retry 3 -o retail-macos-universal.tar.gz "${RELEASE_URL}"; then
         echo "ERROR: failed to download nightly release from ${RELEASE_URL}" >&2
         rm -rf "${EXTRACT_DIR}"
         exit 1
     fi
 
-    tar -xzf tailscale-macos-universal.tar.gz
+    tar -xzf retail-macos-universal.tar.gz
     BIN_SRC="${EXTRACT_DIR}/bin"
 
     # Keep a copy of the freshly-shipped installer so the daemon can self-update.
-    if [ -f "${EXTRACT_DIR}/install-macos-selfsigned.sh" ]; then
-        SCRIPT_SELF="${EXTRACT_DIR}/install-macos-selfsigned.sh"
+    if [ -f "${EXTRACT_DIR}/install-macos-retail.sh" ]; then
+        SCRIPT_SELF="${EXTRACT_DIR}/install-macos-retail.sh"
     fi
     chmod +x "${SCRIPT_SELF}" 2>/dev/null || true
 fi
 
-if [ ! -f "${BIN_SRC}/tailscaled" ]; then
-    echo "Cannot find '${BIN_SRC}/tailscaled'. Run this from the extracted tarball root." >&2
+if [ ! -f "${BIN_SRC}/retaild" ]; then
+    echo "Cannot find '${BIN_SRC}/retaild'. Run this from the extracted tarball root." >&2
     exit 1
 fi
 
@@ -77,35 +77,35 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
-echo "==> Installing tailscaled binary to ${TAILSCALED_BIN}..."
+echo "==> Installing retaild binary to ${RETAILD_BIN}..."
 mkdir -p /usr/local/bin
 # Atomic-ish replace so a running daemon isn't corrupted mid-copy.
-cp -f "${BIN_SRC}/tailscaled" "${TAILSCALED_BIN}.tmp"
-chmod 755 "${TAILSCALED_BIN}.tmp"
-mv -f "${TAILSCALED_BIN}.tmp" "${TAILSCALED_BIN}"
+cp -f "${BIN_SRC}/retaild" "${RETAILD_BIN}.tmp"
+chmod 755 "${RETAILD_BIN}.tmp"
+mv -f "${RETAILD_BIN}.tmp" "${RETAILD_BIN}"
 
-echo "==> Linking tailscale CLI -> tailscaled..."
-# The binary was built with --box (ts_include_cli): invoked as `tailscale`
-# it acts as the CLI, otherwise as the daemon.
-ln -sf tailscaled "${TAILSCALE_BIN}"
+echo "==> Linking retail CLI -> retaild..."
+# The binary was built with --box (ts_include_cli): invoked as `retail`
+# it acts as the CLI, otherwise it runs the daemon.
+ln -sf retaild "${RETAIL_BIN}"
 
 echo "==> Self-codesigning the binary..."
-IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | awk '/Self-Signed Tailscale/ {print $2; exit}')
+IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | awk '/Self-Signed Retail/ {print $2; exit}')
 if [ -n "${IDENTITY}" ]; then
-    codesign --force --sign "${IDENTITY}" --identifier com.tailscale.tailscaled "${TAILSCALED_BIN}"
+    codesign --force --sign "${IDENTITY}" --identifier com.retail.retaild "${RETAILD_BIN}"
 else
-    echo "No 'Self-Signed Tailscale' identity found; using ad-hoc signature (-)." >&2
-    codesign --force --sign - "${TAILSCALED_BIN}"
+    echo "No 'Self-Signed Retail' identity found; using ad-hoc signature (-)." >&2
+    codesign --force --sign - "${RETAILD_BIN}"
 fi
 
 echo "==> Removing quarantine attributes..."
-xattr -dr com.apple.quarantine "${TAILSCALED_BIN}" 2>/dev/null || true
+xattr -dr com.apple.quarantine "${RETAILD_BIN}" 2>/dev/null || true
 
 mkdir -p "${STATE_DIR}"
 
-# NOTE: we deliberately do NOT use `tailscaled install-system-daemon`.
+# NOTE: we deliberately do NOT use `retaild install-system-daemon`.
 # On macOS that command first best-effort *uninstalls* (which does
-# os.Remove(/usr/local/bin/tailscaled)) and then, because the running
+# os.Remove(/usr/local/bin/retaild)) and then, because the running
 # executable IS the target path, skips re-copying it (sameFile==true) --
 # leaving no binary on disk. We write the launchd plist ourselves instead.
 echo "==> Installing LaunchDaemon..."
@@ -119,8 +119,8 @@ tee "${SYS_PLIST}" >/dev/null <<PLIST
     <string>${SERVICE}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${TAILSCALED_BIN}</string>
-        <string>--state=${STATE_DIR}/tailscaled.state</string>
+        <string>${RETAILD_BIN}</string>
+        <string>--state=${STATE_DIR}/retaild.state</string>
         <string>--socket=${SOCKET}</string>
     </array>
     <key>RunAtLoad</key>
@@ -128,9 +128,9 @@ tee "${SYS_PLIST}" >/dev/null <<PLIST
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>${STATE_DIR}/tailscaled.log</string>
+    <string>${STATE_DIR}/retaild.log</string>
     <key>StandardErrorPath</key>
-    <string>${STATE_DIR}/tailscaled.log</string>
+    <string>${STATE_DIR}/retaild.log</string>
 </dict>
 </plist>
 PLIST
@@ -139,7 +139,7 @@ launchctl bootstrap system "${SYS_PLIST}" 2>/dev/null || \
     launchctl load -w "${SYS_PLIST}" 2>/dev/null || true
 
 # Wait for the control socket to come up.
-echo "==> Waiting for tailscaled to be ready..."
+echo "==> Waiting for retaild to be ready..."
 for i in $(seq 1 60); do
     if [ -S "${SOCKET}" ] && ts status >/dev/null 2>&1; then
         break
@@ -153,28 +153,28 @@ done
 
 # Bring the node up with interactive browser login (unless already logged in).
 if ts status 2>/dev/null | grep -qiv 'logged out' && ts status >/dev/null 2>&1; then
-    echo "==> Already logged in; skipping 'tailscale up'."
+    echo "==> Already logged in; skipping 'retail up'."
 elif [ "${AUTO_UPDATE}" = "1" ]; then
-    echo "==> Auto-update: not logged in or daemon not ready; skipping interactive 'tailscale up'."
+    echo "==> Auto-update: not logged in or daemon not ready; skipping interactive 'retail up'."
 else
-    echo "==> Bringing Tailscale up (interactive browser login)..."
+    echo "==> Bringing Retail up (interactive browser login)..."
     echo "    A login URL will be printed below. Open it in a browser to authenticate."
     ts up || {
-        echo "'tailscale up' did not complete. You can retry manually with:"
-        echo "  sudo tailscale --socket=${SOCKET} up"
+        echo "'retail up' did not complete. You can retry manually with:"
+        echo "  sudo retail --socket=${SOCKET} up"
     }
 fi
 
 # ---- Self-updater LaunchDaemon (root-owned, runs daily at 04:00) ----
 echo "==> Installing self-updater LaunchDaemon..."
-UPDATER_SCRIPT="${STATE_DIR}/tailscale-update.sh"
+UPDATER_SCRIPT="${STATE_DIR}/retail-update.sh"
 if [ "${SCRIPT_SELF}" != "${UPDATER_SCRIPT}" ]; then
     cp -f "${SCRIPT_SELF}" "${UPDATER_SCRIPT}"
     chown root:wheel "${UPDATER_SCRIPT}"
     chmod 755 "${UPDATER_SCRIPT}"
 fi
 
-UPDATER_PLIST="/Library/LaunchDaemons/com.tailscale.tailscaled.updater.plist"
+UPDATER_PLIST="/Library/LaunchDaemons/com.retail.retaild.updater.plist"
 launchctl bootout system "${UPDATER_PLIST}" 2>/dev/null || true
 tee "${UPDATER_PLIST}" >/dev/null <<UPDATER
 <?xml version="1.0" encoding="UTF-8"?>
@@ -182,7 +182,7 @@ tee "${UPDATER_PLIST}" >/dev/null <<UPDATER
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.tailscale.tailscaled.updater</string>
+    <string>com.retail.retaild.updater</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
@@ -209,19 +209,19 @@ launchctl bootout system "${UPDATER_PLIST}" 2>/dev/null || true
 launchctl bootstrap system "${UPDATER_PLIST}" 2>/dev/null || \
     launchctl load -w "${UPDATER_PLIST}" 2>/dev/null || true
 
-launchctl list | grep -q "com.tailscale.tailscaled.updater" \
+launchctl list | grep -q "com.retail.retaild.updater" \
     && echo "Updater LaunchDaemon loaded." \
     || echo "Updater LaunchDaemon will load on next boot."
 
 echo ""
-echo "Tailscale (self-signed) has been installed."
+echo "Retail (self-built) has been installed."
 echo "This daemon uses a dedicated socket so it does NOT clash with the"
 echo "official Tailscale GUI app. Talk to it with --socket:"
-echo "  sudo launchctl list | grep com.tailscale"
-echo "  sudo tailscale --socket=${SOCKET} status"
-echo "  sudo tailscale --socket=${SOCKET} netcheck"
+echo "  sudo launchctl list | grep com.retail"
+echo "  sudo retail --socket=${SOCKET} status"
+echo "  sudo retail --socket=${SOCKET} netcheck"
 echo ""
-echo "Tip: add a shell alias -> alias tss='sudo tailscale --socket=${SOCKET}'"
+echo "Tip: add a shell alias -> alias rts='sudo retail --socket=${SOCKET}'"
 echo ""
 echo "If macOS blocks the binary, approve it in"
 echo "System Settings > Privacy & Security, then re-run this installer."
