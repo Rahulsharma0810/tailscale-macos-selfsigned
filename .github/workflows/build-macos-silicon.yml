@@ -43,7 +43,7 @@ jobs:
               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
               | sort -V | tail -n1)
           fi
-          echo "Building upstream tailscale ref: ${REF}"
+          echo "Building upstream mesh ref: ${REF}"
           echo "ref=${REF}" >> "$GITHUB_OUTPUT"
 
       - name: Clone upstream Tailscale
@@ -52,13 +52,27 @@ jobs:
           cd tailscale
           echo "Building $(git describe --tags --always) from ${{ steps.ref.outputs.ref }}"
 
-      - name: Rebrand CLI detection (retail)
+      - name: Targeted string scrubbing (user-facing only)
         working-directory: tailscale
         run: |
           set -euxo pipefail
-          python3 -c "p='cmd/tailscaled/tailscaled.go'; s=open(p).read(); s=s.replace('filepath.Base(os.Args[0]) == \"tailscale\"','filepath.Base(os.Args[0]) == \"retail\"'); open(p,'w').write(s)"
-          grep -n 'filepath.Base(os.Args' cmd/tailscaled/tailscaled.go
-          sed -i '' 's/"tailscale", "serve", "--bg"/"retail", "serve", "--bg"/' cmd/tailscale/cli/serve_v2.go 2>/dev/null || true
+          # Scrub user-facing "tailscale" strings without breaking import paths.
+          # Only replace in specific quoted string literals, not module paths.
+          # CLI name in help text
+          sed -i '' 's/newFlagSet("tailscale")/newFlagSet("mesh")/g' cmd/tailscale/cli/cli.go || true
+          sed -i '' 's/Name:       "tailscale",/Name:       "mesh",/g' cmd/tailscale/cli/cli.go || true
+          sed -i '' 's/ShortUsage: "tailscale \[flags\]/ShortUsage: "mesh [flags]/g' cmd/tailscale/cli/cli.go || true
+          sed -i '' 's/ShortHelp:  "The easiest, most secure way to use WireGuard."/ShortHelp:  "The easiest, most secure way to use WireGuard."/g' cmd/tailscale/cli/cli.go || true
+          # Self-reexec command name
+          sed -i '' 's/"tailscale", "serve", "--bg"/"mesh", "serve", "--bg"/g' cmd/tailscale/cli/serve_v2.go 2>/dev/null || true
+          # Config directory name
+          sed -i '' 's/filepath.Join(confDir, "tailscale")/filepath.Join(confDir, "mesh")/g' cmd/tailscale/cli/ssh.go 2>/dev/null || true
+          # CLI detection (shouldRunCLI)
+          sed -i '' 's/filepath.Base(os.Args\[0\]) == "tailscale"/filepath.Base(os.Args[0]) == "mesh"/g' cmd/tailscaled/tailscaled.go
+          echo "Targeted scrubbing complete"
+          grep -rn '"tailscale"' cmd/tailscale/cli/cli.go cmd/tailscaled/tailscaled.go 2>/dev/null || echo "No remaining quoted tailscale strings in key files"
+
+
 
       - name: Set up Go (from upstream go.mod)
         uses: actions/setup-go@v5
@@ -73,12 +87,12 @@ jobs:
           go version
           lipo -info /usr/bin/true || true
 
-      - name: Build combined universal binary (tailscaled + embedded CLI)
+      - name: Build combined universal binary (meshd + embedded CLI)
         working-directory: tailscale
         run: |
           set -euxo pipefail
-          # --box embeds the `tailscale` CLI into `tailscaled` via the
-          # ts_include_cli build tag: invoking the binary as `tailscale`
+          # --box embeds the `mesh` CLI into `meshd` via the
+          # ts_include_cli build tag: invoking the binary as `mesh`
           # runs the CLI, otherwise it runs the daemon. Same one-binary
           # model as ZeroTier's zerotier-one + symlinks.
           for arch in arm64 amd64; do
@@ -88,26 +102,26 @@ jobs:
             esac
             echo "==> Building darwin/${goarch}"
             CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" \
-              ./build_dist.sh --box -o "retaild-${goarch}" ./cmd/tailscaled
+              ./build_dist.sh --box -o "meshd-${goarch}" ./cmd/tailscaled
           done
 
           echo "==> Creating universal binary with lipo"
-          lipo -create retaild-arm64 retaild-amd64 -output retaild
-          lipo -archs retaild
-          file retaild
+          lipo -create meshd-arm64 meshd-amd64 -output meshd
+          lipo -archs meshd
+          file meshd
 
       - name: Stage binaries
         working-directory: tailscale
         run: |
           set -euxo pipefail
           mkdir -p dist/bin
-          cp retaild dist/bin/retaild
-          # `retail` CLI is the same binary invoked under a different name.
-          ln -sf retaild dist/bin/retail
-          cp ../selfsigned/scripts/install-macos-retail.sh dist/install-macos-retail.sh
-          chmod +x dist/install-macos-retail.sh
+          cp meshd dist/bin/meshd
+          # `mesh` CLI is the same binary invoked under a different name.
+          ln -sf meshd dist/bin/mesh
+          cp ../selfsigned/scripts/install-macos-mesh.sh dist/install-macos-mesh.sh
+          chmod +x dist/install-macos-mesh.sh
           # Record which upstream version this is.
-          ./dist/bin/retaild --version > dist/VERSION.txt || true
+          ./dist/bin/meshd --version > dist/VERSION.txt || true
           echo "upstream_ref=${{ steps.ref.outputs.ref }}" >> dist/VERSION.txt
 
       - name: Ad-hoc codesign
@@ -117,9 +131,9 @@ jobs:
           # macOS runners have no GUI keychain identity; use ad-hoc (-)
           # signatures. Runs after the user approves in
           # System Settings > Privacy & Security (or after quarantine strip).
-          codesign --force --sign - --options=runtime --timestamp=none dist/bin/retaild
-          codesign -dv --verbose=4 dist/bin/retaild || true
-          codesign --verify --verbose dist/bin/retaild || true
+          codesign --force --sign - --options=runtime --timestamp=none dist/bin/meshd
+          codesign -dv --verbose=4 dist/bin/meshd || true
+          codesign --verify --verbose dist/bin/meshd || true
 
       - name: Package artifacts
         working-directory: tailscale
@@ -127,20 +141,20 @@ jobs:
           set -euxo pipefail
           cd dist
           # Dereference the symlink is NOT wanted; keep it as a symlink in the tar.
-          tar -czf ../../retail-macos-universal.tar.gz .
+          tar -czf ../../mesh-macos-universal.tar.gz .
           cd ../..
-          ls -la retail-macos-universal.tar.gz
+          ls -la mesh-macos-universal.tar.gz
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v4
         with:
-          name: retail-macos-universal-tarball
-          path: retail-macos-universal.tar.gz
+          name: mesh-macos-universal-tarball
+          path: mesh-macos-universal.tar.gz
           retention-days: 14
 
       - name: Publish nightly release
         # Move the "nightly" tag so the download URL stays stable:
-        # https://github.com/Rahulsharma0810/tailscale-macos-selfsigned/releases/download/nightly/retail-macos-universal.tar.gz
+        # https://github.com/Rahulsharma0810/tailscale-macos-selfsigned/releases/download/nightly/mesh-macos-universal.tar.gz
         if: >-
           github.event_name == 'schedule' ||
           github.event_name == 'workflow_dispatch' ||
@@ -148,18 +162,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
-          name: Retail macOS Apple Silicon (nightly)
+          name: Mesh macOS Apple Silicon (nightly)
           body: |
             Automated self-signed build for macOS Apple Silicon (universal binary).
             Built from upstream tailscale ref: `${{ steps.ref.outputs.ref }}`.
 
             Install:
             ```
-            tar -xzf retail-macos-universal.tar.gz
-            sudo ./install-macos-retail.sh
+            tar -xzf mesh-macos-universal.tar.gz
+            sudo ./install-macos-mesh.sh
             ```
           files: |
-            retail-macos-universal.tar.gz
+            mesh-macos-universal.tar.gz
           prerelease: true
           fail_on_unmatched_files: false
         env:
