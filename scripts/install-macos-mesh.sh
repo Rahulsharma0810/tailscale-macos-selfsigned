@@ -47,29 +47,18 @@ if [ "${1:-}" = "--auto-update" ]; then
     echo "==> Checking for new release..."
 
     RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/nightly/mesh-macos-universal.tar.gz"
-    API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/nightly"
-    DIGEST_FILE="${STATE_DIR}/installed.digest"
+    ETAG_FILE="${STATE_DIR}/installed.etag"
 
-    # Fetch the remote asset digest to skip redundant downloads.
-    REMOTE_DIGEST=$(curl -fsSL --connect-timeout 30 --max-time 60 "${API_URL}" 2>/dev/null | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    for a in d.get('assets', []):
-        if a.get('name') == 'mesh-macos-universal.tar.gz':
-            print(a.get('digest', ''))
-            break
-except Exception:
-    pass
-" 2>/dev/null || true)
+    # Check ETag via HEAD request (no download, no API rate limit).
+    REMOTE_ETAG=$(curl -fsSLI --connect-timeout 30 --max-time 60 "${RELEASE_URL}" 2>/dev/null | grep -i '^etag:' | tr -d '\r' | sed 's/^[Ee][Tt][Aa][Gg]: *//')
 
-    STORED_DIGEST=""
-    if [ -f "${DIGEST_FILE}" ]; then
-        STORED_DIGEST=$(cat "${DIGEST_FILE}" 2>/dev/null || true)
+    STORED_ETAG=""
+    if [ -f "${ETAG_FILE}" ]; then
+        STORED_ETAG=$(cat "${ETAG_FILE}" 2>/dev/null || true)
     fi
 
-    if [ -n "${REMOTE_DIGEST}" ] && [ "${REMOTE_DIGEST}" = "${STORED_DIGEST}" ]; then
-        echo "==> Already up to date (${REMOTE_DIGEST}); skipping."
+    if [ -n "${REMOTE_ETAG}" ] && [ "${REMOTE_ETAG}" = "${STORED_ETAG}" ]; then
+        echo "==> Already up to date (${REMOTE_ETAG}); skipping."
         exit 0
     fi
 
@@ -250,9 +239,9 @@ echo ""
 echo "If macOS blocks the binary, approve it in"
 echo "System Settings > Privacy & Security, then re-run this installer."
 
-if [ "${AUTO_UPDATE}" = "1" ] && [ -n "${REMOTE_DIGEST:-}" ]; then
+if [ "${AUTO_UPDATE}" = "1" ] && [ -n "${REMOTE_ETAG:-}" ]; then
     mkdir -p "${STATE_DIR}"
-    echo "${REMOTE_DIGEST}" > "${STATE_DIR}/installed.digest"
+    echo "${REMOTE_ETAG}" > "${STATE_DIR}/installed.etag"
 fi
 
 if [ "${AUTO_UPDATE}" = "1" ] && [ -d "${EXTRACT_DIR}" ] && [ "${EXTRACT_DIR}" != "/tmp" ]; then
